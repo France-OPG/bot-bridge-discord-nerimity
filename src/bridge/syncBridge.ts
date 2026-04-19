@@ -46,13 +46,14 @@ class SyncBridge {
   // ─────────────────────────────────────────────
 
   private async initialSync(): Promise<void> {
-    let nerChannels: NerChannel[];
-    try {
-      nerChannels = await nerimityApi.getChannels();
-    } catch (err) {
-      logger.error('SyncBridge: impossible de récupérer les channels Nerimity', { err });
+    const nerChannels = nerimityClient.getCachedChannels();
+
+    if (nerChannels.length === 0) {
+      logger.warn('SyncBridge: aucun channel dans le cache (vérifier NERIMITY_SERVER_ID ou attendre le ready event)');
       return;
     }
+
+    logger.info(`SyncBridge: ${nerChannels.length} channels Nerimity à synchroniser`);
 
     for (const nerCh of nerChannels) {
       // On ignore les catégories

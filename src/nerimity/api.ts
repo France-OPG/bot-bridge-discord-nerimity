@@ -5,8 +5,9 @@ import { logger } from '../utils/logger';
 export interface NerChannel {
   id: string;
   name: string;
-  type: number; // 0 = texte, 2 = vocal (selon le serveur Nerimity)
+  type: number; // 0 = TEXT, 1 = CATEGORY, 2 = VOICE
   order?: number;
+  serverId?: string;
 }
 
 export interface NerMessage {
@@ -27,7 +28,6 @@ export interface NerServer {
   channels: NerChannel[];
 }
 
-// Types Nerimity : 0 = TEXT, 1 = CATEGORY, 2 = VOICE (non officiel, à vérifier)
 export const NER_CHANNEL_TYPE = {
   TEXT: 0,
   CATEGORY: 1,
@@ -46,7 +46,6 @@ class NerimityApi {
       },
     });
 
-    // Log des erreurs HTTP
     this.http.interceptors.response.use(
       res => res,
       err => {
@@ -58,18 +57,6 @@ class NerimityApi {
         return Promise.reject(err);
       }
     );
-  }
-
-  /** Récupère les infos du serveur Nerimity (channels inclus) */
-  async getServer(): Promise<NerServer> {
-    const res = await this.http.get(`/servers/${config.nerimity.serverId}`);
-    return res.data;
-  }
-
-  /** Liste les channels du serveur */
-  async getChannels(): Promise<NerChannel[]> {
-    const server = await this.getServer();
-    return server.channels ?? [];
   }
 
   /** Envoie un message dans un channel Nerimity */
