@@ -2,11 +2,39 @@ import { io, Socket } from 'socket.io-client';
 import { EventEmitter } from 'events';
 import { config } from '../config';
 import { logger } from '../utils/logger';
-import { NerMessage, NerChannel } from './api';
+import { NerChannel } from './api';
 
-// ---- Types d'événements Socket.IO Nerimity ----
+// ─────────────────────────────────────────────────────────────
+//  Noms des events — tirés directement du code source Nerimity
+//  github.com/Nerimity/nerimity-server/blob/main/src/common/
+// ─────────────────────────────────────────────────────────────
 
-export interface NerSocketMessage extends NerMessage {}
+// Client → Serveur (on envoie ces events)
+const EV_AUTHENTICATE = 'user:authenticate';
+
+// Serveur → Client (on reçoit ces events)
+const EV_AUTHENTICATED        = 'user:authenticated';
+const EV_AUTHENTICATE_ERROR   = 'user:authenticate_error';
+const EV_MESSAGE_CREATED      = 'message:created';
+const EV_SERVER_CHANNEL_CREATED = 'server:channel_created';
+const EV_SERVER_CHANNEL_UPDATED = 'server:channel_updated';
+const EV_SERVER_CHANNEL_DELETED = 'server:channel_deleted';
+
+// ─────────────────────────────────────────────────────────────
+//  Types
+// ─────────────────────────────────────────────────────────────
+
+export interface NerSocketMessage {
+  id: string;
+  content: string;
+  channelId: string;
+  createdBy: {
+    id: string;
+    username: string;
+    tag: string;
+    avatar?: string;
+  };
+}
 
 export interface NerChannelCreated {
   id: string;
@@ -25,106 +53,107 @@ export interface NerChannelDeleted {
   serverId: string;
 }
 
-// Payload du event "ready" Nerimity (envoyé après connexion Socket.IO)
-// Contient toute la structure : serveurs, channels, etc.
-export interface NerReadyPayload {
+// Payload du event user:authenticated
+// Contient toutes les données : serveurs, channels, présence…
+interface NerAuthenticatedPayload {
   servers?: Array<{
     id: string;
     name: string;
     channels?: NerChannel[];
+    [key: string]: unknown;
   }>;
-  serverMembers?: unknown[];
   [key: string]: unknown;
 }
 
+// ─────────────────────────────────────────────────────────────
+//  Client
+// ─────────────────────────────────────────────────────────────
+
 export class NerimityClient extends EventEmitter {
   private socket!: Socket;
-  // Cache des channels reçus via le ready event
   private _cachedChannels: NerChannel[] = [];
 
   connect(): void {
     logger.info('Connexion au WebSocket Nerimity...');
 
+    // Connexion SANS token dans le handshake — Nerimity utilise
+    // un event dédié "user:authenticate" après connexion
     this.socket = io(config.nerimity.socketUrl, {
       transports: ['websocket'],
-      auth: { token: config.nerimity.token },
       reconnection: true,
       reconnectionDelay: 3000,
       reconnectionAttempts: Infinity,
     });
 
+    // ── Connexion établie → on s'authentifie ──────────────────
     this.socket.on('connect', () => {
-      logger.info('✅ Nerimity WebSocket connecté (attente du ready event...)');
+      logger.info('✅ Nerimity WebSocket connecté, envoi du token...');
+      // Nerimity attend le token via cet event dans les 30s
+      // sinon il déconnecte ("Authentication timed out")
+      this.socket.emit(EV_AUTHENTICATE, config.nerimity.token);
     });
 
+    // ── Authentification réussie → on reçoit toutes les données ─
+    this.socket.on(EV_AUTHENTICATED, (data: NerAuthenticatedPayload) => {
+      logger.info('✅ Nerimity authentifié (user:authenticated reçu)');
+
+      // Cherche notre serveur dans la liste et cache ses channels
+      const server = data?.servers?.find(
+        s => s.id === config.nerimity.serverId
+      );
+      if (server?.channels && server.channels.length > 0) {
+        this._cachedChannels = server.channels;
+        logger.info(`Nerimity: ${this._cachedChannels.length} channels chargés`);
+      } else {
+        logger.warn('Nerimity: serveur non trouvé ou pas de channels dans le payload authenticated');
+        logger.debug('IDs serveurs reçus:', data?.servers?.map(s => s.id));
+      }
+
+      this.emit('ready');
+    });
+
+    // ── Erreur d'authentification ─────────────────────────────
+    this.socket.on(EV_AUTHENTICATE_ERROR, (err: unknown) => {
+      logger.error('❌ Nerimity: erreur authentification', { err });
+    });
+
+    // ── Déconnexion ───────────────────────────────────────────
     this.socket.on('disconnect', (reason: string) => {
       logger.warn(`⚠️  Nerimity WebSocket déconnecté : ${reason}`);
       this.emit('disconnect');
     });
 
     this.socket.on('connect_error', (err: Error) => {
-      logger.error('Erreur connexion Nerimity WebSocket', { message: err.message });
+      logger.error('Erreur connexion Nerimity', { message: err.message });
     });
 
-    // --- Ready event : Nerimity envoie toute la structure au moment de la connexion ---
-    // On capture les channels ici pour éviter d'avoir à faire un appel REST
-    const handleReady = (data: NerReadyPayload) => {
-      logger.info('✅ Nerimity ready event reçu');
-
-      // Cherche notre serveur dans la liste des serveurs
-      const server = data?.servers?.find(s => s.id === config.nerimity.serverId);
-      if (server?.channels) {
-        this._cachedChannels = server.channels;
-        logger.info(`Nerimity: ${this._cachedChannels.length} channels chargés depuis le ready event`);
-      } else {
-        logger.warn('Nerimity ready: serveur non trouvé ou pas de channels dans le payload');
-        logger.debug('Serveurs reçus:', data?.servers?.map(s => ({ id: s.id, name: s.name })));
-      }
-
-      this.emit('ready');
-    };
-
-    // Nerimity utilise "ready" comme nom d'event Socket.IO
-    this.socket.on('ready', handleReady);
-    // Fallback au cas où le nom est différent
-    this.socket.on('READY', handleReady);
-
-    // --- Réception de messages ---
-    this.socket.on('MESSAGE_CREATED', (data: NerSocketMessage) => {
-      logger.debug('Nerimity MESSAGE_CREATED', { channelId: data.channelId, user: data.createdBy?.username });
+    // ── Messages texte ────────────────────────────────────────
+    this.socket.on(EV_MESSAGE_CREATED, (data: NerSocketMessage) => {
+      logger.debug('Nerimity message:created', {
+        channelId: data.channelId,
+        user: data.createdBy?.username,
+      });
       this.emit('message', data);
     });
 
-    // --- Gestion des channels ---
-    this.socket.on('CHANNEL_CREATED', (data: NerChannelCreated) => {
-      logger.info(`Nerimity: nouveau channel créé — ${data.name}`);
+    // ── Gestion des channels (temps réel) ─────────────────────
+    this.socket.on(EV_SERVER_CHANNEL_CREATED, (data: NerChannelCreated) => {
+      logger.info(`Nerimity: channel créé — ${data.name}`);
       this.emit('channelCreated', data);
     });
 
-    this.socket.on('CHANNEL_UPDATED', (data: NerChannelUpdated) => {
+    this.socket.on(EV_SERVER_CHANNEL_UPDATED, (data: NerChannelUpdated) => {
       logger.info(`Nerimity: channel mis à jour — ${data.channelId}`);
       this.emit('channelUpdated', data);
     });
 
-    this.socket.on('CHANNEL_DELETED', (data: NerChannelDeleted) => {
+    this.socket.on(EV_SERVER_CHANNEL_DELETED, (data: NerChannelDeleted) => {
       logger.info(`Nerimity: channel supprimé — ${data.channelId}`);
       this.emit('channelDeleted', data);
     });
-
-    // Debug : log tous les events inconnus (pour découvrir les vrais noms)
-    const originalOnEvent = this.socket.onAny.bind(this.socket);
-    originalOnEvent((eventName: string, ...args: unknown[]) => {
-      const knownEvents = ['connect', 'disconnect', 'connect_error', 'ready', 'READY',
-        'MESSAGE_CREATED', 'CHANNEL_CREATED', 'CHANNEL_UPDATED', 'CHANNEL_DELETED'];
-      if (!knownEvents.includes(eventName)) {
-        logger.debug(`Nerimity event inconnu reçu: "${eventName}"`, {
-          preview: JSON.stringify(args[0])?.slice(0, 100)
-        });
-      }
-    });
   }
 
-  /** Retourne les channels du serveur (depuis le cache du ready event) */
+  /** Channels du serveur, disponibles après authentification */
   getCachedChannels(): NerChannel[] {
     return this._cachedChannels;
   }
