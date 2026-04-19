@@ -90,7 +90,7 @@ export class NerimityClient extends EventEmitter {
       logger.info('✅ Nerimity WebSocket connecté, envoi du token...');
       // Nerimity attend le token via cet event dans les 30s
       // sinon il déconnecte ("Authentication timed out")
-      this.socket.emit(EV_AUTHENTICATE, config.nerimity.token);
+      this.socket.emit(EV_AUTHENTICATE, { token: config.nerimity.token });
     });
 
     // ── Authentification réussie → on reçoit toutes les données ─
