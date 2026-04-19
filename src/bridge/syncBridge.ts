@@ -216,8 +216,9 @@ class SyncBridge {
     // --- Renommage d'un channel côté Discord ---
     discordBot.on(
       Events.ChannelUpdate,
-      async (oldCh: GuildChannel | NonThreadGuildBasedChannel, newCh: GuildChannel | NonThreadGuildBasedChannel) => {
+      async (oldCh, newCh) => {
         if (!('guildId' in newCh) || newCh.guildId !== config.discord.guildId) return;
+        if (!('name' in oldCh) || !('name' in newCh)) return;
         if (oldCh.name === newCh.name) return;
 
         const pair = channelStore.getByDiscord(newCh.id);
@@ -234,7 +235,7 @@ class SyncBridge {
     // --- Suppression d'un channel côté Discord ---
     discordBot.on(
       Events.ChannelDelete,
-      async (channel: GuildChannel | NonThreadGuildBasedChannel) => {
+      async (channel) => {
         if (!('guildId' in channel) || channel.guildId !== config.discord.guildId) return;
 
         const pair = channelStore.getByDiscord(channel.id);

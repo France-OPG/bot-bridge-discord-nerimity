@@ -25,5 +25,8 @@
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "@types/node": "^20.11.5"
+  },
+  "overrides": {
+    "discord-api-types": "0.37.83"
   }
 }

@@ -115,7 +115,9 @@ class VoiceBridge {
     const connection = joinVoiceChannel({
       channelId: discordChannelId,
       guildId: config.discord.guildId,
-      adapterCreator: channel.guild.voiceAdapterCreator,
+      // Cast nécessaire : conflit de types discord-api-types entre discord.js et @discordjs/voice
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      adapterCreator: channel.guild.voiceAdapterCreator as any,
       selfDeaf: false,   // doit écouter les autres
       selfMute: false,   // peut parler (pour relayer Nerimity)
     });

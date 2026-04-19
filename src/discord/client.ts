@@ -8,6 +8,7 @@ import {
   WebhookClient,
   Guild,
   GuildChannel,
+  NonThreadGuildBasedChannel,
   Collection,
 } from 'discord.js';
 import { config } from '../config';
@@ -34,22 +35,22 @@ class DiscordBot extends Client {
     return guild;
   }
 
-  async getTextChannels(): Promise<Collection<string, GuildChannel>> {
+  async getTextChannels(): Promise<Collection<string, NonThreadGuildBasedChannel>> {
     const guild = await this.getGuild();
     const channels = await guild.channels.fetch();
     return channels.filter(
-      (ch): ch is GuildChannel =>
+      (ch): ch is NonThreadGuildBasedChannel =>
         ch !== null && ch.type === ChannelType.GuildText
-    ) as Collection<string, GuildChannel>;
+    ) as Collection<string, NonThreadGuildBasedChannel>;
   }
 
-  async getVoiceChannels(): Promise<Collection<string, GuildChannel>> {
+  async getVoiceChannels(): Promise<Collection<string, NonThreadGuildBasedChannel>> {
     const guild = await this.getGuild();
     const channels = await guild.channels.fetch();
     return channels.filter(
-      (ch): ch is GuildChannel =>
+      (ch): ch is NonThreadGuildBasedChannel =>
         ch !== null && ch.type === ChannelType.GuildVoice
-    ) as Collection<string, GuildChannel>;
+    ) as Collection<string, NonThreadGuildBasedChannel>;
   }
 
   /** Trouve un channel texte Discord par son nom exact */
